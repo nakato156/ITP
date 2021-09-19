@@ -1,24 +1,30 @@
 from socket import socket
-from os import path, getcwd, system
-from time import sleep
+from os import path, getcwd
 
 ip,port = input("Ingrese el host y el puerto <host,port>: ").split(",")
 sock = socket()
 sock.connect((ip,int(port)))
 
-def get_file(filename:str, content:bytes, sock:socket=None, blocks=None)->bool:
+def get_file(filename:str, sock:socket)->bool:
     ruta = path.join(getcwd(), "files", filename)
+    sock.sendall(f"-get-file {filename}".encode())
 
-    if blocks:
+    header = sock.recv(1024)
+    if b"-size " in header:
         content = b""
-        while True:
-            res = sock.recv(1024)
-            if res == b"complete":
-                print(res.decode())
-                break
+        num_bytes = int(header.decode().split("-size ")[1])
+        
+        my_bytes = 0
+        while my_bytes<num_bytes: 
+            res = sock.recv(1024) 
+            my_bytes += len(res)
             content+=res
+    else: content=header
+
     with open(ruta,"wb") as f:
         f.write(content)
+    
+    return b"complete"
 
 def send_file(filename:str, sock:socket)->bytes:
     try:
@@ -30,11 +36,10 @@ def send_file(filename:str, sock:socket)->bytes:
     with open(ruta,"rb") as f:
         cont = f.read()
     if size>1024:
-        sock.sendall(f"-file -size {(size//1024)+1} {name}".encode())
+        sock.sendall(f"-file -size {size} {name}".encode())
         for i in range(0, size, 1024):
             content = cont[i: i+1024]
-            sock.sendall(content)
-            sleep(0.7)        
+            sock.sendall(content)        
     else:
         sock.sendall(f"-file {name}".encode())
         sock.sendall(cont)
@@ -50,23 +55,15 @@ while True:
     if msg.startswith("-file "):
         name = msg.split("-file ")[1]
         res = send_file(name, sock)
+    elif msg.startswith("-get-file "):
+        name = msg.split("-get-file ")[1]
+        res = get_file(name, sock)
     else: 
         msg = msg if type(msg) is bytes else msg.encode()
         sock.send(msg)
         res = sock.recv(1024)
 
-    if b"-size " in res: 
-        blocks = int(res.decode().split("-size ")[1])
-        name = msg.decode().split("-get-file ")[1]
-        get_file(name, res, sock, blocks=blocks)
-    elif res == b"-file":
-        #print(res, msg)
-        name = msg.decode().split("-get-file ")[1]
-        res = sock.recv(1024)
-        get_file(name, res)
-        print(sock.recv(1024).decode())
-    else:
-        print(res.decode())
+    print(res.decode())
 
 sock.close()
 print("Conexion cerrada")

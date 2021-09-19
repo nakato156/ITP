@@ -1,6 +1,5 @@
 from socket import socket
 from subprocess import Popen, PIPE
-from time import sleep
 from os import getcwd
 from os.path import getsize, join
 
@@ -9,8 +8,11 @@ def files(con:socket = None, *args)->bytes:
     filename = args[2] if "-size"==args[0] else args[0]
     content = b""
     if "-size" in args:
-        for _ in range(int(args[1])):
+        num_bytes = int(args[1])
+        my_bytes = 0
+        while my_bytes!=num_bytes:
             res = con.recv(1024)
+            my_bytes+=len(res)
             content+= res
         print("terminate")    
     else:
@@ -29,16 +31,13 @@ def get_file(con:socket, name:str)->bytes:
         with open(path,"rb") as f:
             file = f.read()
         if size>1024:
-            con.sendall(f"-size {size//1024}".encode())
+            con.sendall(f"-size {size}".encode())
             for i in range(0, size, 1024):                
                 content = file[i:i+1024]               
                 con.sendall(content)
-                sleep(0.7)
         else:
-            con.sendall(b"-file")
-            sleep(0.5)
             con.sendall(file)   
-        return b"complete"    
+        return b""    
     except Exception as e:
         return f"Error: {e}".encode()            
 
@@ -65,9 +64,9 @@ functions = {
     '-cmd': cmd
 }
 
-def main():
+def main(host:str,port:int=100):
     sock = socket()
-    sock.bind(("192.168.0.105",82))
+    sock.bind((host,port))
     sock.listen(1)
     print("socket encendido")
 
@@ -101,9 +100,10 @@ def main():
             headers = msg.split(" ")
             verb = headers[0]
             res = functions[verb](con, headers[1:])
+        print(res)    
         con.sendall(res)       
     sock.close()
     print("conexion cerrada")
 
 if __name__ =="__main__":
-    main()
+    main("192.168.0.100",82)
