@@ -37,4 +37,5 @@ Toda la operación entre archivos se hace de forma binaria par evitar problemas 
 - No existe un archivo `requirements.txt` ya que no se ha usado ningún módulo externo, todos los módulos usados ya vienen instalados por defecto en Python 3.x
 
 ## Notas
+
 Para usar este protcolo en su forma "cruda" (como script de python) se debe de usar una versión de Python 3.5 o posterior, esto debido al uso de "Sugerencias de tipo" especificado en el  [PEP484](https://www.python.org/dev/peps/pep-0484/), si desea puede usar cualquier versión de Python 3.x pero deberá quitar todas las sugerencias de tipo añadidas en el código, esto ha sido añadido con el fin de que otras personas que contribuyan con el código tengan una noción de como funcionan algunas cosas del código.
