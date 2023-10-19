@@ -3,29 +3,29 @@ from subprocess import Popen, PIPE
 from os import getcwd
 from os.path import getsize, join
 
-def files(con:socket = None, *args)->bytes: 
-    args = args[0]
-    filename = args[2] if "-size"==args[0] else args[0]
+HEADER_BYTES = 18
+
+def files(con:socket, length:int, *args)->bytes:
+    filename = args[0]
     content = b""
-    if "-size" in args:
-        num_bytes = int(args[1])
+    
+    if length > 1024:
+        num_bytes = length
         my_bytes = 0
-        while my_bytes!=num_bytes:
+        while my_bytes != num_bytes:
             res = con.recv(1024)
             my_bytes+=len(res)
             content+= res
-        print("terminate")    
+        print("terminate")
     else:
         content = con.recv(1024)
 
     path = join(getcwd(),"files",filename)    
     with open(path, "wb") as f:
         f.write(content)
-    return b"create file"
 
-def get_file(con:socket, name:str)->bytes:
+def get_file(con:socket, length:int, name:str)->bytes:
     try:
-        name = name[0]
         path = join(getcwd(),"files",name)
         size = getsize(path) 
         with open(path,"rb") as f:
@@ -36,18 +36,24 @@ def get_file(con:socket, name:str)->bytes:
                 content = file[i:i+1024]               
                 con.sendall(content)
         else:
-            con.sendall(file)   
-        return b""    
+            con.sendall(file)
     except Exception as e:
         return f"Error: {e}".encode()            
 
 def cmd(sock: socket, *args)->bytes:
-    cmd = args[0]
+    cmd = args[1]
     try:
         process =Popen(cmd, stdout=PIPE, stderr=PIPE)
         stdout, stderr =process.communicate()
-        return (stdout if stdout else stderr)
+        res = stdout if stdout else stderr
+        sock.sendall(f"-size {len(res)}".encode())
+        if len(res) < 1024:
+            sock.sendall(res)
+        else:
+            for i in range(0, len(res), 1024):
+                sock.sendall(res[i: i * 1024])
     except FileNotFoundError as e:
+        print(e)
         return f"{e}".encode()    
 
 def authenticate(user:str, pwd:str)->bool:
@@ -58,13 +64,94 @@ def authenticate(user:str, pwd:str)->bool:
         return False 
     return True
 
+def make_error(sock:socket, msg:str, cod:int)->bytes:
+    msg = f"error|{msg}:{cod}".encode()
+    sock.sendall(msg)
+    sock.close()
+    exit()
+
+def crear_header(longitud:int, comando:str):
+    longitud = min(longitud, 10**12 - 1)
+
+    longitud_bytes = longitud.to_bytes(8, byteorder='little')
+    comando_bytes = comando.encode('utf-8')
+
+    header = longitud_bytes + b'|' + comando_bytes
+    header = header.ljust(HEADER_BYTES, b'\0')
+
+    return header
+
+def send_data(sock:socket, operacion:str, data:bytes):
+    lenght = len(data)
+    header:bytes = crear_header(lenght, operacion)
+    sock.sendall(header + data)
+
+def parse_header(sock:socket)->tuple:
+    """
+    ## Returns
+    comando: str
+        - Comando a ejecutar
+
+    longitud: int
+        - Longitud del contenido  
+    """
+    header:bytes = sock.recv(HEADER_BYTES)
+    if not header:
+        return None, None
+    if not b"|" in header:
+        make_error(sock, "header mal formado", 1)
+    longitud_bytes, comando_bytes = header.split(b"|")
+    longitud = int.from_bytes(longitud_bytes, byteorder='little')
+    comando = comando_bytes.rstrip(b"\0").decode('utf-8')
+    return comando, longitud
+
+def parse_content(sock:socket, lenght:int) -> bytes:
+    data = b''
+    while len(data) < lenght:
+        chunk = sock.recv(lenght + 1 - len(data))
+        if not chunk: break
+        data += chunk
+    return data
+
+def read_data(sock:socket) -> tuple:
+    """
+    ## Returns
+    comando: str
+        - Comando a ejecutar
+
+    data: bytes
+        - Contenido del mensaje recibido 
+    """
+    operation, lenght =  parse_header(sock)
+    if not lenght: return None, None
+    return operation, parse_content(sock, int(lenght))
+
 functions = {
     '-file': files,
-    '-get-file': get_file,
+    '-gfile': get_file,
     '-cmd': cmd
 }
 
-def main(host:str,port:int=100):
+def rec_data_serve(con:socket):
+    while True:
+        try:
+            cmd,longitud = parse_header(con)
+        except UnicodeError as e:
+            print(e)
+            con.sendall(b"error al momento de decodificar infromacion")
+            continue    
+
+        if not cmd: break
+        elif cmd.startswith("-"): #if command exist
+            args:list[str] = con.recv(1024).strip().decode().split(" ")
+            verb = cmd
+            functions[verb](con, longitud, *args)
+            # send_data(con, f"r{verb}", res)
+        else:
+            send_data(con, "sts", b"A1")
+            yield parse_content(con, longitud)
+
+def server(host:str, port:int, callback=print):
     sock = socket()
     sock.bind((host,port))
     sock.listen(1)
@@ -73,37 +160,28 @@ def main(host:str,port:int=100):
     con,addr = sock.accept()
     print(f"conectado con {addr}")
 
-    msg = con.recv(1024).decode().strip()
-    #authenticate
+    # pedir autenticacion
+    cmd, length = parse_header(con)
     try:
-        if not authenticate(*msg.split(",")): raise
-        else: con.sendall(b"auth:ok")
-        global functions
-    except:
-        con.sendall(b"not authentication")
-        con.close()
-        exit()
+        if cmd != "auth": raise ValueError("No se ha enviado una autenticacion")
+        msg = parse_content(con, int(length)).decode()
+        
+        if not authenticate(*msg.split(",")): raise ValueError("aa")
+    except ValueError as e:
+        make_error(con, "not authenticate", 2)
+    
+    #autenticacion satisfactoria
+    send_data(con, "auth", b"A1")
 
     while True:
-        try:
-            msg = con.recv(1024).decode().strip()
-        except Exception as e:
-            print(e)
-            con.sendall(b"error al momento de decodificar infromacion")
-            continue    
-        res = b"status:ok"
-        if not msg: #verify close connection
-            con.close()
-            break
-        if msg.startswith("-"): #if command exist
-            #splitet headers
-            headers = msg.split(" ")
-            verb = headers[0]
-            res = functions[verb](con, headers[1:])
-        print(res)    
-        con.sendall(res)       
+        msg = next(rec_data_serve(con))
+        if msg is None: break
+        callback(msg)
     sock.close()
+
+def main(host:str, port:int)->None:
+    server(host, port)
     print("conexion cerrada")
 
 if __name__ =="__main__":
-    main("192.168.0.100",82)
+    main("0.0.0.0", 82)
