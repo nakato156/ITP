@@ -51,7 +51,8 @@ def send_file(filename:str, sock:socket)->bytes:
     
     header = crear_header(len(cont), "-file")
     print(header +  filename.encode())
-    sock.sendall(header + filename.encode())
+    sock.sendall(header)
+    sock.sendall(filename.encode())
 
     if size>1024:
         for i in range(0, size, 1024):
